@@ -1,0 +1,189 @@
+#!/bin/bash
+# Mango T-Flash Writer tool
+
+LC_ALL="C"
+TFLASH=/dev/$1
+BOARD=$2
+OPT=$3
+
+BL1_310=bl1ah
+UBOOT_310=u-boot.bin
+KERNEL_310=zImage
+ANDROID_310=mango310_android.tgz
+UBOOT_100=mango100_uboot.bin
+KERNEL_100=mango100_zImage
+ANDROID_100=mango100_eclair.tgz
+ROOTFS=4412fs-20191121.tar.gz
+
+echo "Mango SD Writer V1.0"
+
+print_success()
+{
+    if [ "$1" == 0 ]; then
+	echo "success"
+    else
+	echo "failed"
+	exit -1
+    fi
+}
+
+print_usage()
+{
+    echo "Usage: $0 device board <options: bin|android|gnome|all>"
+    echo "options:"
+    echo "    bin: wirte bootloader and kernel"
+    echo "    android: wirte android file system"
+    echo "    gnome: write gnome file system "
+    echo "    all or no option: wirte all"
+    echo "ex) $0 sdb 220"
+    echo "ex) $0 sdb 220 bin"
+    exit 1
+}
+
+# Check args
+check_args()
+{
+if [ ! -b "$TFLASH" ]; then
+    print_usage
+fi
+
+# Check TFlash Sectors
+TFLASH_SECTORS=`fdisk -l -u $TFLASH | grep sectors | head -n 1 \
+| cut -d',' -f4 | cut -d' ' -f3`
+
+# Boot images and ANDROID, GNOME Partition Size
+#    Boot images(bootloader + Kernel): 10 MB
+#    GONME : 512 MB
+#    Android : 512 MB
+
+case "$BOARD" in
+	220)
+	;;
+
+    *)
+    print_usage
+    ;;
+esac
+}
+
+partition_add()
+{
+    echo n
+    echo p
+    echo $1
+    echo $2
+    echo $3
+}
+
+sdcard_format()
+{
+    (
+
+# Pre Partition Delete
+    echo d
+    echo 4
+    echo d
+    echo 3
+    echo d
+    echo 2
+    echo d
+    echo 1
+
+# Partition Create
+    partition_add 1 2048 4196351
+    partition_add 2 4196352 14682111
+    partition_add 3 14682112 14682211
+    partition_add 4 14682212 15523839
+
+# Misc
+    echo a
+    echo 1
+    echo t
+    echo 1
+    echo c
+
+    echo w
+    echo q
+    ) | fdisk -u $TFLASH  > /dev/null 2>&1
+
+# Partition Format
+    mkfs.vfat -F 32 /dev/sdb1
+    mkfs.ext3 /dev/sdb2
+    mkfs.ext3 /dev/sdb3
+    mkfs.ext3 /dev/sdb4
+
+    echo -n ">> Partition and Format Done."
+}
+
+umount_all()
+{
+echo
+echo -n "Unmount all : "
+DEV_MOUNT=`df | grep $1 | awk '{ print $6 }'`
+for i in $DEV_MOUNT; do
+umount $i
+done
+
+if [ "$?" == 0 ]; then
+	echo "success"
+else
+	echo "not Mounted"
+fi
+}
+
+write_bin()
+{
+case "$BOARD" in
+    220)
+	./sd_fusing.sh $TFLASH	
+    print_success "$?"
+    ;;
+
+    *)
+    echo "Make Bootloader and Kernel: Error !!!"
+    ;;
+esac
+}
+
+write_rootfs()
+{
+echo
+echo -n "4412 Root Filesystem Create : "
+mkdir temp
+#mkfs.ext4 "$TFLASH"2 -L gnome > /dev/null 2>&1
+mount "$TFLASH"2 temp
+cd temp
+tar zxvf ../$ROOTFS > /dev/null 2>&1
+cd ..
+sync
+umount temp
+rm -rf temp
+print_success "$?"
+}
+
+check_args
+umount_all $1
+case "$OPT" in
+    bin)
+    write_bin
+    ;;
+
+    gnome)
+    write_gnome
+    ;;
+
+	format)
+	sdcard_format
+	;;
+
+    all|*)
+    sdcard_format
+    write_bin
+    write_rootfs
+    ;;
+esac
+umount_all $1
+
+echo
+echo "Success"
+
